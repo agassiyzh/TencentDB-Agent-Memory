@@ -1,0 +1,79 @@
+name: Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: docker-ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: gateway
+            image: ghcr.io/${{ github.repository_owner }}/tencentdb-agent-memory
+            dockerfile: ./docker/opensource/Dockerfile.gateway
+            description: TencentDB Agent Memory Gateway standalone image.
+          - id: hermes
+            image: ghcr.io/${{ github.repository_owner }}/tencentdb-agent-memory-hermes
+            dockerfile: ./docker/opensource/Dockerfile.hermes
+            description: All-in-one Hermes + TencentDB Agent Memory image.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          flavor: |
+            latest=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=main,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+          labels: |
+            org.opencontainers.image.title=TencentDB Agent Memory ${{ matrix.id }} image
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.vendor=TencentDB Agent Memory Team
+
+      - name: Build and push ${{ matrix.id }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.id }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.id }}
